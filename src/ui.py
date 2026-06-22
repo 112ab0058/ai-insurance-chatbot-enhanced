@@ -110,6 +110,7 @@ def render_knowledge_overview(
     info: DocumentInfo | None,
     github_token_configured: bool,
     offline_mode: bool = False,
+    chunks: list | None = None,
 ) -> None:
     st.markdown("### 目前知識庫")
     if info:
@@ -124,6 +125,22 @@ def render_knowledge_overview(
             """,
             unsafe_allow_html=True,
         )
+        with st.expander("🔍 查看所有條文區塊"):
+            if chunks:
+                rows = []
+                for index, chunk in enumerate(chunks, start=1):
+                    compact = " ".join(chunk.page_content.split())
+                    rows.append(
+                        {
+                            "編號": f"Chunk #{index}",
+                            "頁碼": f"第 {int(chunk.metadata.get('page', 0)) + 1} 頁",
+                            "內容預覽": compact[:150] + ("…" if len(compact) > 150 else ""),
+                            "字元數": len(chunk.page_content),
+                        }
+                    )
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+            else:
+                st.caption("目前沒有可預覽的條文區塊。")
     else:
         st.warning("目前尚未建立知識庫。")
 

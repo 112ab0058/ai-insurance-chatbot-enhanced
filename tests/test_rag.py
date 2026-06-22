@@ -71,7 +71,8 @@ def test_context_uses_human_page_numbers_and_sources():
     )
     assert "第 1 頁" in context
     assert sources[0].page == 1
-    assert 0 <= sources[0].relevance <= 1
+    assert sources[0].relevance == 0.5
+    assert sources[0].distance == 0.5
 
 
 def test_local_search_finds_relevant_chinese_clause_without_api():
@@ -99,6 +100,9 @@ def test_prompt_requires_grounded_answer():
     assert "只能依據" in prompt
     assert "檢索到的保單內容：\n條款" in prompt
     assert "問題" in prompt
+    assert "📌 **結論**" in prompt
+    assert "📄 **條文依據**" in prompt
+    assert "⚠️ **注意事項**" in prompt
 
 
 def test_answer_question_with_mock_model_has_sources():

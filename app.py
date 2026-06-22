@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
-import time
 from html import escape
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 from src.config import APP_NAME, DEFAULT_PDF, SAMPLE_QUESTIONS
@@ -18,7 +19,6 @@ from src.rag import (
     build_knowledge_base,
     compute_file_hash,
     friendly_error,
-    inspect_document,
 )
 from src.ui import apply_styles, render_claims_guide, render_knowledge_overview
 
@@ -64,7 +64,10 @@ def reset_messages() -> None:
 def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> None:
     """Build and activate a document only after the new index succeeds."""
     document_hash = compute_file_hash(pdf_bytes)
-    if document_hash == st.session_state.get("document_hash"):
+    if (
+        document_hash == st.session_state.get("document_hash")
+        and "vectorstore" in st.session_state
+    ):
         return
 
     vectorstore, document_info = cached_knowledge_base(
@@ -77,31 +80,67 @@ def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> Non
     reset_messages()
 
 
-@st.cache_data(show_spinner=False)
-def cached_document_info(document_hash: str, pdf_bytes: bytes, filename: str):
-    """Cache local PDF parsing for the no-API classroom demo."""
-    return inspect_document(pdf_bytes, filename)
-
-
 def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
     document_hash = compute_file_hash(pdf_bytes)
-    if document_hash == st.session_state.get("document_hash"):
+    if (
+        document_hash == st.session_state.get("document_hash")
+        and "vectorstore" in st.session_state
+    ):
         return
-    st.session_state.document_info = cached_document_info(
-        document_hash, pdf_bytes, filename
+    vectorstore, document_info = cached_knowledge_base(
+        document_hash, pdf_bytes, filename, ""
     )
+    st.session_state.vectorstore = vectorstore
+    st.session_state.document_info = document_info
     st.session_state.document_hash = document_hash
-    st.session_state.pop("vectorstore", None)
     st.session_state.answer_cache = {}
     reset_messages()
 
 
+# [修改 6] 使用瀏覽器原生 Clipboard API，失敗時顯示手動複製文字框。
+def render_copy_button(answer: str, message_index: int) -> None:
+    payload = json.dumps(answer, ensure_ascii=False)
+    element_id = f"copy_answer_{message_index}"
+    components.html(
+        f"""
+        <div style="text-align:right;font-family:system-ui,sans-serif">
+          <button id="{element_id}" onclick="copyAnswer()"
+            style="border:1px solid #d8e4e9;background:#fff;border-radius:8px;
+                   padding:6px 10px;color:#486273;cursor:pointer;font-size:13px">
+            📋 複製回答
+          </button>
+          <span id="{element_id}_status" style="margin-left:6px;color:#168b7e;font-size:12px"></span>
+          <textarea id="{element_id}_fallback" readonly
+            style="display:none;width:100%;height:80px;margin-top:6px"></textarea>
+        </div>
+        <script>
+        async function copyAnswer() {{
+          const text = {payload};
+          const status = document.getElementById('{element_id}_status');
+          try {{
+            await navigator.clipboard.writeText(text);
+            status.textContent = '已複製';
+          }} catch (error) {{
+            const fallback = document.getElementById('{element_id}_fallback');
+            fallback.value = text;
+            fallback.style.display = 'block';
+            fallback.select();
+            status.textContent = '請從下方手動複製';
+          }}
+        }}
+        </script>
+        """,
+        height=105,
+    )
+
+
+# [修改 3] AI 回答會套用 src.rag.build_prompt 定義的三段式結構。
 def ask(question: str, github_token: str) -> None:
     question = question.strip()
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
         return
-    if github_token and "vectorstore" not in st.session_state:
+    if "vectorstore" not in st.session_state:
         st.error("知識庫尚未就緒，請稍後重試或重新上傳 PDF。")
         return
 
@@ -146,6 +185,10 @@ def ask(question: str, github_token: str) -> None:
 
 if "messages" not in st.session_state:
     reset_messages()
+
+# [修改 1] pending_question 讓常見問題按鈕在 rerun 後自動送出。
+if "pending_question" not in st.session_state:
+    st.session_state.pending_question = ""
 
 github_token = get_github_token()
 default_path = Path(DEFAULT_PDF)
@@ -204,10 +247,24 @@ with st.sidebar:
     if info and not github_token:
         st.info("目前為免 API 離線展示模式，可使用四個範例問題。")
 
-    st.caption("上傳文件僅保留於記憶體，重新整理工作階段後即清除。")
+    # [修改 10] 將隱私說明移至側邊欄知識庫狀態下方。
+    st.caption("隱私說明：上傳的 PDF 僅存於當前工作階段記憶體，關閉頁面後自動清除。")
     if st.button("清除對話", use_container_width=True, icon="🗑️"):
         reset_messages()
         st.rerun()
+
+    # [修改 9] 顯示提問統計與建議問法。
+    question_count = sum(
+        1 for message in st.session_state.messages if message.get("role") == "user"
+    )
+    st.caption(f"本次對話已提問：{question_count} 題")
+    st.divider()
+    with st.expander("💡 建議問法"):
+        st.markdown(
+            "- 癌症住院每天可以領多少？\n"
+            "- 哪些手術不在保障範圍？\n"
+            "- 申請理賠需要準備哪些文件？"
+        )
 
 
 st.markdown(
@@ -224,12 +281,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# [修改 10] 精簡頂部狀態列，移除工作階段標籤。
 status_text = "4o-mini 已連線" if info and github_token else "離線展示模式" if info else "等待設定"
 st.markdown(
     f"""
     <div class="trust-row">
       <span>● {status_text}</span><span>回答附原文頁碼</span>
-      <span>PDF 僅限工作階段</span><span>不取代專業理賠審核</span>
+      <span>不取代專業理賠審核</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -242,7 +300,7 @@ chat_tab, claims_tab, knowledge_tab = st.tabs(
 with chat_tab:
     st.markdown("#### 常見問題")
     question_columns = st.columns(len(SAMPLE_QUESTIONS))
-    selected_question = ""
+    # [修改 1] 點擊後寫入完整問題並立即 rerun，下一輪自動執行。
     for column, item in zip(question_columns, SAMPLE_QUESTIONS):
         with column:
             if st.button(
@@ -251,20 +309,30 @@ with chat_tab:
                 help=item["question"],
                 use_container_width=True,
             ):
-                selected_question = item["question"]
+                st.session_state.pending_question = item["question"]
+                st.rerun()
 
     st.markdown('<div class="chat-divider"></div>', unsafe_allow_html=True)
-    for message in st.session_state.messages:
+    for message_index, message in enumerate(st.session_state.messages):
         avatar = "🛡️" if message["role"] == "assistant" else "👤"
         with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
             sources = message.get("sources", [])
+            # [修改 2 + 修改 5] 顯示 top-3 原始條文、distance 與 0–100 信心分數。
             if sources:
-                with st.expander(f"查看引用依據（{len(sources)} 則）"):
+                with st.expander("📄 引用條文（點擊展開）"):
                     for index, source in enumerate(sources, start=1):
+                        confidence = round(float(source.get("relevance", 0)) * 100)
+                        raw_distance = source.get("distance")
+                        distance = (
+                            1 - confidence / 100
+                            if raw_distance is None
+                            else float(raw_distance)
+                        )
                         st.markdown(
-                            f"**來源 {index}｜第 {source['page']} 頁**  "
-                            f"相關度 {source['relevance']:.0%}"
+                            f"---\n**【來源 {index}】頁碼：第 {source['page']} 頁**  \n"
+                            f"距離分數：{distance:.2f}｜相似度：{confidence / 100:.2f}｜"
+                            f"**相似度 {confidence} / 100**"
                         )
                         st.caption(source["excerpt"])
             if message["role"] == "assistant":
@@ -272,31 +340,47 @@ with chat_tab:
                     st.caption("本回答由 4o-mini 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
                 else:
                     st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
+                if message_index > 0:
+                    render_copy_button(message["content"], message_index)
+
+    has_knowledge_base = bool(info and st.session_state.get("vectorstore"))
+
+    # [修改 8] 尚未建立知識庫時顯示上傳引導卡片。
+    if not has_knowledge_base:
+        st.markdown(
+            """
+            <div class="guide-card" style="text-align:center;padding:2.2rem">
+              <div style="font-size:2.6rem">⬆️</div>
+              <h3>請先上傳保單 PDF</h3>
+              <p>從左側文件中心拖曳或選擇保單 PDF，系統將自動建立知識庫，約需 10–30 秒。</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     typed_question = st.chat_input(
         "輸入保險條款問題，例如：美容手術可以理賠嗎？",
-        disabled=not bool(info),
+        disabled=not has_knowledge_base,
     )
-    incoming_question = selected_question or typed_question
+    incoming_question = st.session_state.pending_question or typed_question
     if incoming_question:
-        with st.status("正在分析問題…", expanded=True) as analysis_status:
-            time.sleep(0.55)
-            analysis_status.update(label="正在搜尋相關條款…")
-            time.sleep(0.7)
-            analysis_status.update(label="正在整理答案與引用頁碼…")
-            time.sleep(0.55)
+        st.session_state.pending_question = ""
+        # [修改 4] AI 回答出現前顯示 Typing Indicator。
+        with st.spinner("安心保正在查詢保單條款中..."):
             ask(incoming_question, github_token)
-            analysis_status.update(label="分析完成", state="complete")
         st.rerun()
 
 with claims_tab:
     render_claims_guide()
 
 with knowledge_tab:
+    # [修改 7] 傳入所有 chunks，供知識庫資訊 Tab 預覽。
+    chunks = getattr(st.session_state.get("vectorstore"), "documents", [])
     render_knowledge_overview(
         info,
         github_token_configured=bool(github_token),
         offline_mode=bool(info and not github_token),
+        chunks=chunks,
     )
 
 st.markdown(
