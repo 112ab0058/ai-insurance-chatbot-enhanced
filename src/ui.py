@@ -107,7 +107,7 @@ def render_claims_guide() -> None:
 
 
 def render_knowledge_overview(
-    info: DocumentInfo | None, api_key_configured: bool
+    info: DocumentInfo | None, api_key_configured: bool, offline_mode: bool = False
 ) -> None:
     st.markdown("### 目前知識庫")
     if info:
@@ -129,12 +129,14 @@ def render_knowledge_overview(
     st.markdown(
         """
         1. 解析 PDF 並保留每段文字的原始頁碼。
-        2. 將問題轉換為向量，從 FAISS 找出最相關的條款。
-        3. 由 GPT-4o-mini 僅依檢索內容整理繁體中文答案。
+        2. 連線模式會將問題轉換為向量，從 FAISS 找出最相關的條款。
+        3. 連線模式由 GPT-4o-mini 依檢索內容整理繁體中文答案；離線展示則使用預先核對的範例答案。
         4. 顯示引用頁碼與原文節錄，讓使用者自行核對。
         """
     )
     key_status = "已安全載入" if api_key_configured else "尚未設定"
     st.markdown(f"**OpenAI 連線：** {key_status}  ")
+    if offline_mode:
+        st.info("目前使用離線展示模式：答案已預先依預設保單核對，不會向外部 AI 服務傳送資料。")
     st.markdown("**隱私設計：** 上傳的 PDF 僅存在目前伺服器工作階段的記憶體中。")
     st.warning("此系統是條款閱讀輔助工具，不構成保險、法律或醫療建議，也不代表最終理賠結果。")

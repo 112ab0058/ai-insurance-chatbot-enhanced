@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from html import escape
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.config import APP_NAME, DEFAULT_PDF, SAMPLE_QUESTIONS
+from src.offline import answer_offline
 from src.rag import (
     DocumentInfo,
     RAGError,
@@ -15,6 +17,7 @@ from src.rag import (
     build_knowledge_base,
     compute_file_hash,
     friendly_error,
+    inspect_document,
 )
 from src.ui import apply_styles, render_claims_guide, render_knowledge_overview
 
@@ -72,15 +75,30 @@ def activate_document(pdf_bytes: bytes, filename: str, api_key: str) -> None:
     reset_messages()
 
 
+@st.cache_data(show_spinner=False)
+def cached_document_info(document_hash: str, pdf_bytes: bytes, filename: str):
+    """Cache local PDF parsing for the no-API classroom demo."""
+    return inspect_document(pdf_bytes, filename)
+
+
+def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
+    document_hash = compute_file_hash(pdf_bytes)
+    if document_hash == st.session_state.get("document_hash"):
+        return
+    st.session_state.document_info = cached_document_info(
+        document_hash, pdf_bytes, filename
+    )
+    st.session_state.document_hash = document_hash
+    st.session_state.pop("vectorstore", None)
+    reset_messages()
+
+
 def ask(question: str, api_key: str) -> None:
     question = question.strip()
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
         return
-    if not api_key:
-        st.error("尚未設定 OPENAI_API_KEY，請先完成環境設定。")
-        return
-    if "vectorstore" not in st.session_state:
+    if api_key and "vectorstore" not in st.session_state:
         st.error("知識庫尚未就緒，請稍後重試或重新上傳 PDF。")
         return
 
@@ -89,12 +107,17 @@ def ask(question: str, api_key: str) -> None:
     )
     try:
         prior_messages = st.session_state.messages[:-1]
-        result = answer_question(
-            st.session_state.vectorstore,
-            question,
-            api_key,
-            chat_history=prior_messages[-6:],
-        )
+        if api_key:
+            result = answer_question(
+                st.session_state.vectorstore,
+                question,
+                api_key,
+                chat_history=prior_messages[-6:],
+            )
+        elif st.session_state.document_info.filename == DEFAULT_PDF:
+            result = answer_offline(question)
+        else:
+            raise RAGError("自訂 PDF 需要設定 API Key；離線展示僅支援預設保單。")
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -141,10 +164,13 @@ with st.sidebar:
         candidate_bytes = default_path.read_bytes() if default_path.exists() else b""
         candidate_name = default_path.name
 
-    if api_key and candidate_bytes:
+    if candidate_bytes:
         try:
-            with st.spinner("正在建立文件索引…"):
-                activate_document(candidate_bytes, candidate_name, api_key)
+            with st.spinner("正在解析保單文件…"):
+                if api_key:
+                    activate_document(candidate_bytes, candidate_name, api_key)
+                else:
+                    activate_offline_document(candidate_bytes, candidate_name)
         except Exception as exc:
             st.error(f"新文件無法建立索引：{friendly_error(exc)}")
     elif not candidate_bytes:
@@ -164,7 +190,10 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     elif not api_key:
-        st.warning("需要設定 OPENAI_API_KEY 才能建立知識庫。")
+        st.warning("離線展示模式僅支援預設保單。")
+
+    if info and not api_key:
+        st.info("目前為免 API 離線展示模式，可使用四個範例問題。")
 
     st.caption("上傳文件僅保留於記憶體，重新整理工作階段後即清除。")
     if st.button("清除對話", use_container_width=True, icon="🗑️"):
@@ -186,7 +215,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-status_text = "系統就緒" if info and api_key else "等待設定"
+status_text = "AI 系統就緒" if info and api_key else "離線展示模式" if info else "等待設定"
 st.markdown(
     f"""
     <div class="trust-row">
@@ -230,23 +259,34 @@ with chat_tab:
                         )
                         st.caption(source["excerpt"])
             if message["role"] == "assistant":
-                st.caption("本回答由 AI 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
+                if api_key:
+                    st.caption("本回答由 AI 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
+                else:
+                    st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
 
     typed_question = st.chat_input(
         "輸入保險條款問題，例如：美容手術可以理賠嗎？",
-        disabled=not bool(info and api_key),
+        disabled=not bool(info),
     )
     incoming_question = selected_question or typed_question
     if incoming_question:
-        with st.spinner("正在比對保單條款…"):
+        with st.status("正在分析問題…", expanded=True) as analysis_status:
+            time.sleep(0.55)
+            analysis_status.update(label="正在搜尋相關條款…")
+            time.sleep(0.7)
+            analysis_status.update(label="正在整理答案與引用頁碼…")
+            time.sleep(0.55)
             ask(incoming_question, api_key)
+            analysis_status.update(label="分析完成", state="complete")
         st.rerun()
 
 with claims_tab:
     render_claims_guide()
 
 with knowledge_tab:
-    render_knowledge_overview(info, api_key_configured=bool(api_key))
+    render_knowledge_overview(
+        info, api_key_configured=bool(api_key), offline_mode=bool(info and not api_key)
+    )
 
 st.markdown(
     '<footer>2026 人工智慧跨域專題實作 · 安心保 AI 保險助理</footer>',

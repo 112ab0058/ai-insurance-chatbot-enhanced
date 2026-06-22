@@ -111,6 +111,18 @@ def build_knowledge_base(pdf_bytes: bytes, filename: str, api_key: str):
     return vectorstore, info
 
 
+def inspect_document(pdf_bytes: bytes, filename: str) -> DocumentInfo:
+    """Parse a PDF and return metadata without calling an external API."""
+    pages = parse_pdf(pdf_bytes, filename)
+    chunks = split_documents(pages)
+    return DocumentInfo(
+        filename=filename,
+        page_count=max(int(doc.metadata["page"]) for doc in pages) + 1,
+        chunk_count=len(chunks),
+        document_hash=compute_file_hash(pdf_bytes),
+    )
+
+
 def score_to_relevance(score: float) -> float:
     if not math.isfinite(score):
         return 0.0
