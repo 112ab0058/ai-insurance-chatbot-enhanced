@@ -118,16 +118,14 @@ def _match_score(question: str, keywords: Iterable[str]) -> int:
 
 def answer_offline(question: str) -> RAGAnswer:
     """Return a curated, document-grounded answer for classroom demo topics."""
-    ranked = sorted(
-        ((_match_score(question, entry.keywords), entry) for entry in DEMO_ENTRIES),
-        key=lambda item: item[0],
-        reverse=True,
+    # Entries are intentionally ordered from specific to broad. This prevents a
+    # cosmetic-surgery question containing generic words such as「可以申請」
+    # from being routed to the general hospitalization answer.
+    for entry in DEMO_ENTRIES:
+        if _match_score(question, entry.keywords) > 0:
+            return RAGAnswer(entry.answer, list(entry.sources))
+    return RAGAnswer(
+        "離線展示模式目前可回答住院保障、除外責任、申請文件與美容手術四類問題。"
+        "請改用上方範例問題，或設定 API Key 後查詢其他條款。",
+        [],
     )
-    score, entry = ranked[0]
-    if score == 0:
-        return RAGAnswer(
-            "離線展示模式目前可回答住院保障、除外責任、申請文件與美容手術四類問題。"
-            "請改用上方範例問題，或設定 API Key 後查詢其他條款。",
-            [],
-        )
-    return RAGAnswer(entry.answer, list(entry.sources))
