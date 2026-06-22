@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 from html import escape
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
-from src.config import APP_NAME, DEFAULT_PDF, SAMPLE_QUESTIONS
+from src.config import APP_NAME, DEFAULT_PDF
 from src.offline import answer_offline
 from src.rag import (
     DocumentInfo,
@@ -97,44 +95,7 @@ def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
     reset_messages()
 
 
-# [修改 6] 使用瀏覽器原生 Clipboard API，失敗時顯示手動複製文字框。
-def render_copy_button(answer: str, message_index: int) -> None:
-    payload = json.dumps(answer, ensure_ascii=False)
-    element_id = f"copy_answer_{message_index}"
-    components.html(
-        f"""
-        <div style="text-align:right;font-family:system-ui,sans-serif">
-          <button id="{element_id}" onclick="copyAnswer()"
-            style="border:1px solid #d8e4e9;background:#fff;border-radius:8px;
-                   padding:6px 10px;color:#486273;cursor:pointer;font-size:13px">
-            📋 複製回答
-          </button>
-          <span id="{element_id}_status" style="margin-left:6px;color:#168b7e;font-size:12px"></span>
-          <textarea id="{element_id}_fallback" readonly
-            style="display:none;width:100%;height:80px;margin-top:6px"></textarea>
-        </div>
-        <script>
-        async function copyAnswer() {{
-          const text = {payload};
-          const status = document.getElementById('{element_id}_status');
-          try {{
-            await navigator.clipboard.writeText(text);
-            status.textContent = '已複製';
-          }} catch (error) {{
-            const fallback = document.getElementById('{element_id}_fallback');
-            fallback.value = text;
-            fallback.style.display = 'block';
-            fallback.select();
-            status.textContent = '請從下方手動複製';
-          }}
-        }}
-        </script>
-        """,
-        height=105,
-    )
-
-
-# [修改 3] AI 回答會套用 src.rag.build_prompt 定義的三段式結構。
+# [修改3] AI 回答會套用 src.rag.SYSTEM_PROMPT 定義的三段式結構。
 def ask(question: str, github_token: str) -> None:
     question = question.strip()
     if not question:
@@ -186,7 +147,7 @@ def ask(question: str, github_token: str) -> None:
 if "messages" not in st.session_state:
     reset_messages()
 
-# [修改 1] pending_question 讓常見問題按鈕在 rerun 後自動送出。
+# [修改1] pending_question 讓常見問題按鈕在 rerun 後自動送出。
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = ""
 
@@ -298,18 +259,33 @@ chat_tab, claims_tab, knowledge_tab = st.tabs(
 )
 
 with chat_tab:
+    # [修改6] 沒有向量知識庫時顯示 Empty State，並停止渲染聊天元件。
+    if "vectorstore" not in st.session_state or st.session_state["vectorstore"] is None:
+        st.markdown(
+            """
+            <div style="text-align:center; padding: 60px 20px; color: #888;">
+                <div style="font-size: 48px;">⬆️</div>
+                <h3 style="color: #555;">請先上傳保單 PDF</h3>
+                <p>從左側「文件中心」拖曳或選擇保單 PDF<br>系統將自動建立知識庫，約需 10–30 秒</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
     st.markdown("#### 常見問題")
-    question_columns = st.columns(len(SAMPLE_QUESTIONS))
-    # [修改 1] 點擊後寫入完整問題並立即 rerun，下一輪自動執行。
-    for column, item in zip(question_columns, SAMPLE_QUESTIONS):
-        with column:
-            if st.button(
-                item["label"],
-                key=f"sample_{item['label']}",
-                help=item["question"],
-                use_container_width=True,
-            ):
-                st.session_state.pending_question = item["question"]
+    # [修改1] 四個常見問題按鈕一鍵填入 pending_question 並立即送出。
+    quick_questions = {
+        "住院保障": "骨折住院可以申請理賠嗎？",
+        "除外責任": "哪些情況不在理賠範圍內？",
+        "申請文件": "理賠需要準備哪些文件？",
+        "美容手術": "美容手術可以理賠嗎？",
+    }
+    cols = st.columns(4)
+    for i, (label, question) in enumerate(quick_questions.items()):
+        with cols[i]:
+            if st.button(label, use_container_width=True):
+                st.session_state["pending_question"] = question
                 st.rerun()
 
     st.markdown('<div class="chat-divider"></div>', unsafe_allow_html=True)
@@ -318,56 +294,58 @@ with chat_tab:
         with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
             sources = message.get("sources", [])
-            # [修改 2 + 修改 5] 顯示 top-3 原始條文、distance 與 0–100 信心分數。
-            if sources:
-                with st.expander("📄 引用條文（點擊展開）"):
-                    for index, source in enumerate(sources, start=1):
-                        confidence = round(float(source.get("relevance", 0)) * 100)
-                        raw_distance = source.get("distance")
-                        distance = (
-                            1 - confidence / 100
-                            if raw_distance is None
-                            else float(raw_distance)
-                        )
+            # [修改2] 從 messages 內持久化的 content/page/score 重建引用條文。
+            if message["role"] == "assistant" and sources:
+                with st.expander("📄 引用條文（點擊展開查看依據）"):
+                    for source_index, source in enumerate(sources):
+                        score = float(source.get("score", 1.0))
+                        confidence = max(0, round(100 - score * 100))
+                        page = source.get("page", "未知")
+                        content = source.get("content", "")[:300]
                         st.markdown(
-                            f"---\n**【來源 {index}】頁碼：第 {source['page']} 頁**  \n"
-                            f"距離分數：{distance:.2f}｜相似度：{confidence / 100:.2f}｜"
-                            f"**相似度 {confidence} / 100**"
+                            f"""
+**【來源 {source_index + 1}】** 頁碼：第 {page} 頁　｜　相似度：**{confidence} / 100**
+
+> {content}
+
+---
+"""
                         )
-                        st.caption(source["excerpt"])
             if message["role"] == "assistant":
                 if github_token:
                     st.caption("本回答由 4o-mini 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
                 else:
                     st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
-                if message_index > 0:
-                    render_copy_button(message["content"], message_index)
+                # [修改5] 以原生 Streamlit 按鈕顯示可手動複製的純文字框。
+                col1, col2 = st.columns([6, 1])
+                with col2:
+                    if st.button("📋 複製", key=f"copy_{message_index}"):
+                        st.session_state[f"show_copy_{message_index}"] = True
+                if st.session_state.get(f"show_copy_{message_index}"):
+                    st.text_area(
+                        "複製以下內容：",
+                        value=message["content"],
+                        height=100,
+                        key=f"textarea_{message_index}",
+                    )
 
     has_knowledge_base = bool(info and st.session_state.get("vectorstore"))
 
-    # [修改 8] 尚未建立知識庫時顯示上傳引導卡片。
-    if not has_knowledge_base:
-        st.markdown(
-            """
-            <div class="guide-card" style="text-align:center;padding:2.2rem">
-              <div style="font-size:2.6rem">⬆️</div>
-              <h3>請先上傳保單 PDF</h3>
-              <p>從左側文件中心拖曳或選擇保單 PDF，系統將自動建立知識庫，約需 10–30 秒。</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
+    # [修改1] 優先取出快速問題，直接走入與手動輸入相同的問答流程。
+    user_input = ""
+    if "pending_question" in st.session_state and st.session_state["pending_question"]:
+        user_input = st.session_state.pop("pending_question")
     typed_question = st.chat_input(
         "輸入保險條款問題，例如：美容手術可以理賠嗎？",
         disabled=not has_knowledge_base,
     )
-    incoming_question = st.session_state.pending_question or typed_question
-    if incoming_question:
-        st.session_state.pending_question = ""
-        # [修改 4] AI 回答出現前顯示 Typing Indicator。
-        with st.spinner("安心保正在查詢保單條款中..."):
-            ask(incoming_question, github_token)
+    if typed_question:
+        user_input = typed_question
+    if user_input:
+        # [修改4] 呼叫 4o-mini 前在 assistant 對話泡泡中顯示 Typing Indicator。
+        with st.chat_message("assistant", avatar="🛡️"):
+            with st.spinner("安心保正在查詢保單條款中..."):
+                ask(user_input, github_token)
         st.rerun()
 
 with claims_tab:

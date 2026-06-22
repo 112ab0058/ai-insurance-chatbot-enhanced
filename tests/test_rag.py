@@ -73,6 +73,11 @@ def test_context_uses_human_page_numbers_and_sources():
     assert sources[0].page == 1
     assert sources[0].relevance == 0.5
     assert sources[0].distance == 0.5
+    assert sources[0].to_dict() == {
+        "content": "住院條款",
+        "page": 1,
+        "score": 0.5,
+    }
 
 
 def test_local_search_finds_relevant_chinese_clause_without_api():
