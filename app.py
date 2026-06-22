@@ -39,7 +39,7 @@ WELCOME_MESSAGE = {
 
 
 def get_github_token() -> str:
-    """Read the GitHub Models token from the environment or Streamlit Secrets."""
+    """Read the 4o-mini service token from the environment or Streamlit Secrets."""
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         return token
@@ -224,7 +224,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-status_text = "GitHub Models 已連線" if info and github_token else "離線展示模式" if info else "等待設定"
+status_text = "4o-mini 已連線" if info and github_token else "離線展示模式" if info else "等待設定"
 st.markdown(
     f"""
     <div class="trust-row">
@@ -269,7 +269,7 @@ with chat_tab:
                         st.caption(source["excerpt"])
             if message["role"] == "assistant":
                 if github_token:
-                    st.caption("本回答由 GitHub Models 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
+                    st.caption("本回答由 4o-mini 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
                 else:
                     st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
 

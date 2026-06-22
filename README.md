@@ -1,6 +1,6 @@
 # 安心保 AI 保險助理
 
-以 Streamlit、GitHub Models 與本機條款檢索建立的繁體中文保險問答系統。系統會從 PDF 找出相關條款，再由 `openai/gpt-4o-mini` 整理答案並附上頁碼與原文節錄。
+以 Streamlit、4o-mini 與本機條款檢索建立的繁體中文保險問答系統。系統會從 PDF 找出相關條款，再由 `openai/gpt-4o-mini` 整理答案並附上頁碼與原文節錄。
 
 ## 功能
 
@@ -27,7 +27,7 @@
 GITHUB_TOKEN = "github_pat_..."
 ```
 
-Token 必須具備 GitHub Models 呼叫權限。不要把 `.env`、`secrets.toml` 或 Token 提交至 GitHub；曾貼在聊天或公開位置的 Token 應立即撤銷並重新建立。
+Token 必須具備模型服務呼叫權限。不要把 `.env`、`secrets.toml` 或 Token 提交至 GitHub；曾貼在聊天或公開位置的 Token 應立即撤銷並重新建立。
 
 ## 測試
 
@@ -35,7 +35,7 @@ Token 必須具備 GitHub Models 呼叫權限。不要把 `.env`、`secrets.toml
 pytest -q
 ```
 
-測試使用模擬模型，不會呼叫 GitHub Models 或產生額度消耗。
+測試使用模擬模型，不會呼叫 4o-mini 或產生額度消耗。
 
 ## 展示建議
 

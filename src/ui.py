@@ -132,12 +132,12 @@ def render_knowledge_overview(
         """
         1. 解析 PDF 並保留每段文字的原始頁碼。
         2. 在伺服器本機搜尋最相關的條款，不另外呼叫 Embedding API。
-        3. 連線模式由 GitHub Models 的 GPT-4o-mini 整理繁體中文答案；離線展示則使用預先核對的範例答案。
+        3. 連線模式由 4o-mini 整理繁體中文答案；離線展示則使用預先核對的範例答案。
         4. 顯示引用頁碼與原文節錄，讓使用者自行核對。
         """
     )
     key_status = "已安全載入" if github_token_configured else "尚未設定"
-    st.markdown(f"**GitHub Models 連線：** {key_status}  ")
+    st.markdown(f"**4o-mini 連線：** {key_status}  ")
     if offline_mode:
         st.info("目前使用離線展示模式：答案已預先依預設保單核對，不會向外部 AI 服務傳送資料。")
     st.markdown("**隱私設計：** 上傳的 PDF 僅存在目前伺服器工作階段的記憶體中。")
