@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 
 from src.rag import (
     RAGError,
+    LocalVectorStore,
     answer_question,
     build_prompt,
     compute_file_hash,
@@ -18,7 +19,7 @@ from src.rag import (
 class FakeVectorStore:
     def similarity_search_with_score(self, question, k):
         assert question == "美容手術可以理賠嗎？"
-        assert k == 4
+        assert k == 3
         return [
             (
                 Document(
@@ -71,6 +72,20 @@ def test_context_uses_human_page_numbers_and_sources():
     assert "第 1 頁" in context
     assert sources[0].page == 1
     assert 0 <= sources[0].relevance <= 1
+
+
+def test_local_search_finds_relevant_chinese_clause_without_api():
+    store = LocalVectorStore(
+        [
+            Document(page_content="住院醫療費用與病房差額。", metadata={"page": 0}),
+            Document(
+                page_content="美容手術不負給付責任，但重建基本功能者不在此限。",
+                metadata={"page": 1},
+            ),
+        ]
+    )
+    results = store.similarity_search_with_score("美容手術可以理賠嗎？", k=1)
+    assert results[0][0].metadata["page"] == 1
 
 
 def test_relevance_is_bounded():

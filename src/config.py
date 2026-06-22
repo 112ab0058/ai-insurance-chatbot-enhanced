@@ -1,7 +1,8 @@
 APP_NAME = "安心保｜AI 保險助理"
 DEFAULT_PDF = "insurance.pdf"
-MODEL_NAME = "gpt-4o-mini"
-CHUNK_SIZE = 900
+MODEL_NAME = "openai/gpt-4o-mini"
+GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
+CHUNK_SIZE = 700
 CHUNK_OVERLAP = 140
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 

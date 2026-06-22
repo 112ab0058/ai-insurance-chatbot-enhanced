@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from typing import Any, Iterable, Sequence
 
-from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import OpenAI
 from pypdf import PdfReader
 
-from src.config import CHUNK_OVERLAP, CHUNK_SIZE, MAX_UPLOAD_BYTES, MODEL_NAME
+from src.config import (
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    GITHUB_MODELS_BASE_URL,
+    MAX_UPLOAD_BYTES,
+    MODEL_NAME,
+)
 
 
 class RAGError(ValueError):
@@ -95,13 +101,39 @@ def split_documents(
     return splitter.split_documents(list(documents))
 
 
-def build_knowledge_base(pdf_bytes: bytes, filename: str, api_key: str):
-    if not api_key:
-        raise RAGError("尚未設定 OPENAI_API_KEY。")
+def _search_terms(text: str) -> set[str]:
+    compact = "".join(text.lower().split())
+    latin = set(re.findall(r"[a-z0-9]+", compact))
+    han = "".join(re.findall(r"[\u4e00-\u9fff]", compact))
+    return latin | set(han) | {han[index : index + 2] for index in range(len(han) - 1)}
+
+
+class LocalVectorStore:
+    """Small lexical index that avoids paid embedding requests."""
+
+    def __init__(self, documents: Sequence[Document]):
+        self.documents = list(documents)
+        self.term_sets = [_search_terms(doc.page_content) for doc in self.documents]
+
+    def similarity_search_with_score(self, question: str, k: int = 3):
+        query_terms = _search_terms(question)
+        if not query_terms:
+            return []
+        ranked: list[tuple[Document, float]] = []
+        for document, terms in zip(self.documents, self.term_sets):
+            overlap = len(query_terms & terms)
+            if overlap == 0:
+                continue
+            similarity = overlap / math.sqrt(len(query_terms) * max(len(terms), 1))
+            ranked.append((document, 1.0 - similarity))
+        ranked.sort(key=lambda item: item[1])
+        return ranked[:k]
+
+
+def build_knowledge_base(pdf_bytes: bytes, filename: str, api_key: str = ""):
     pages = parse_pdf(pdf_bytes, filename)
     chunks = split_documents(pages)
-    embeddings = OpenAIEmbeddings(api_key=api_key)
-    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore = LocalVectorStore(chunks)
     info = DocumentInfo(
         filename=filename,
         page_count=max(int(doc.metadata["page"]) for doc in pages) + 1,
@@ -186,14 +218,26 @@ def answer_question(
 ) -> RAGAnswer:
     if not question.strip():
         raise RAGError("問題不能是空白。")
-    results = vectorstore.similarity_search_with_score(question, k=4)
+    results = vectorstore.similarity_search_with_score(question, k=3)
     if not results:
         return RAGAnswer("目前文件中找不到足夠資訊，建議向保險公司確認。", [])
 
     context, sources = format_context(results)
-    model = llm or ChatOpenAI(model=MODEL_NAME, temperature=0, api_key=api_key)
-    response = model.invoke(build_prompt(question, context, chat_history))
-    answer = str(getattr(response, "content", response)).strip()
+    prompt = build_prompt(question, context, chat_history)
+    if llm is not None:
+        response = llm.invoke(prompt)
+        answer = str(getattr(response, "content", response)).strip()
+    else:
+        if not api_key:
+            raise RAGError("尚未設定 GITHUB_TOKEN。")
+        client = OpenAI(api_key=api_key, base_url=GITHUB_MODELS_BASE_URL)
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=450,
+        )
+        answer = (response.choices[0].message.content or "").strip()
     if not answer:
         raise RAGError("模型沒有回傳內容，請稍後重試。")
     return RAGAnswer(answer, sources)
@@ -204,7 +248,7 @@ def friendly_error(exc: Exception) -> str:
         return str(exc)
     message = str(exc).lower()
     if "api key" in message or "authentication" in message or "401" in message:
-        return "OpenAI API Key 無效或尚未設定，請檢查環境設定。"
+        return "GitHub Token 無效、已過期或未開放 Models 權限，請檢查 Streamlit Secrets。"
     if "rate" in message or "429" in message or "quota" in message:
         return "目前 AI 服務請求過多或額度不足，請稍後再試。"
     if "timeout" in message or "connection" in message:

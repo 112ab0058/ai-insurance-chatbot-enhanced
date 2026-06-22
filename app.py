@@ -12,6 +12,7 @@ from src.config import APP_NAME, DEFAULT_PDF, SAMPLE_QUESTIONS
 from src.offline import answer_offline
 from src.rag import (
     DocumentInfo,
+    RAGAnswer,
     RAGError,
     answer_question,
     build_knowledge_base,
@@ -37,41 +38,42 @@ WELCOME_MESSAGE = {
 }
 
 
-def get_api_key() -> str:
-    """Read the API key from the environment or Streamlit Secrets."""
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if key:
-        return key
+def get_github_token() -> str:
+    """Read the GitHub Models token from the environment or Streamlit Secrets."""
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        return token
     try:
-        return str(st.secrets.get("OPENAI_API_KEY", "")).strip()
+        return str(st.secrets.get("GITHUB_TOKEN", "")).strip()
     except (FileNotFoundError, KeyError):
         return ""
 
 
 @st.cache_resource(show_spinner=False)
 def cached_knowledge_base(
-    document_hash: str, pdf_bytes: bytes, filename: str, _api_key: str
+    document_hash: str, pdf_bytes: bytes, filename: str, _github_token: str
 ):
-    """Cache parsing, embeddings, and the FAISS index by document hash."""
-    return build_knowledge_base(pdf_bytes, filename, _api_key)
+    """Cache local PDF parsing and search index by document hash."""
+    return build_knowledge_base(pdf_bytes, filename)
 
 
 def reset_messages() -> None:
     st.session_state.messages = [WELCOME_MESSAGE.copy()]
 
 
-def activate_document(pdf_bytes: bytes, filename: str, api_key: str) -> None:
+def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> None:
     """Build and activate a document only after the new index succeeds."""
     document_hash = compute_file_hash(pdf_bytes)
     if document_hash == st.session_state.get("document_hash"):
         return
 
     vectorstore, document_info = cached_knowledge_base(
-        document_hash, pdf_bytes, filename, api_key
+        document_hash, pdf_bytes, filename, github_token
     )
     st.session_state.vectorstore = vectorstore
     st.session_state.document_info = document_info
     st.session_state.document_hash = document_hash
+    st.session_state.answer_cache = {}
     reset_messages()
 
 
@@ -90,15 +92,16 @@ def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
     )
     st.session_state.document_hash = document_hash
     st.session_state.pop("vectorstore", None)
+    st.session_state.answer_cache = {}
     reset_messages()
 
 
-def ask(question: str, api_key: str) -> None:
+def ask(question: str, github_token: str) -> None:
     question = question.strip()
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
         return
-    if api_key and "vectorstore" not in st.session_state:
+    if github_token and "vectorstore" not in st.session_state:
         st.error("知識庫尚未就緒，請稍後重試或重新上傳 PDF。")
         return
 
@@ -107,13 +110,19 @@ def ask(question: str, api_key: str) -> None:
     )
     try:
         prior_messages = st.session_state.messages[:-1]
-        if api_key:
+        cache_key = f"{st.session_state.get('document_hash', '')}:{question}"
+        cached_result = st.session_state.setdefault("answer_cache", {}).get(cache_key)
+        if cached_result:
+            answer, sources = cached_result
+            result = RAGAnswer(answer=answer, sources=sources)
+        elif github_token:
             result = answer_question(
                 st.session_state.vectorstore,
                 question,
-                api_key,
-                chat_history=prior_messages[-6:],
+                github_token,
+                chat_history=prior_messages[-4:],
             )
+            st.session_state.answer_cache[cache_key] = (result.answer, result.sources)
         elif st.session_state.document_info.filename == DEFAULT_PDF:
             result = answer_offline(question)
         else:
@@ -138,7 +147,7 @@ def ask(question: str, api_key: str) -> None:
 if "messages" not in st.session_state:
     reset_messages()
 
-api_key = get_api_key()
+github_token = get_github_token()
 default_path = Path(DEFAULT_PDF)
 
 with st.sidebar:
@@ -167,8 +176,8 @@ with st.sidebar:
     if candidate_bytes:
         try:
             with st.spinner("正在解析保單文件…"):
-                if api_key:
-                    activate_document(candidate_bytes, candidate_name, api_key)
+                if github_token:
+                    activate_document(candidate_bytes, candidate_name, github_token)
                 else:
                     activate_offline_document(candidate_bytes, candidate_name)
         except Exception as exc:
@@ -189,10 +198,10 @@ with st.sidebar:
             """,
             unsafe_allow_html=True,
         )
-    elif not api_key:
+    elif not github_token:
         st.warning("離線展示模式僅支援預設保單。")
 
-    if info and not api_key:
+    if info and not github_token:
         st.info("目前為免 API 離線展示模式，可使用四個範例問題。")
 
     st.caption("上傳文件僅保留於記憶體，重新整理工作階段後即清除。")
@@ -215,7 +224,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-status_text = "AI 系統就緒" if info and api_key else "離線展示模式" if info else "等待設定"
+status_text = "GitHub Models 已連線" if info and github_token else "離線展示模式" if info else "等待設定"
 st.markdown(
     f"""
     <div class="trust-row">
@@ -259,8 +268,8 @@ with chat_tab:
                         )
                         st.caption(source["excerpt"])
             if message["role"] == "assistant":
-                if api_key:
-                    st.caption("本回答由 AI 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
+                if github_token:
+                    st.caption("本回答由 GitHub Models 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
                 else:
                     st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
 
@@ -276,7 +285,7 @@ with chat_tab:
             time.sleep(0.7)
             analysis_status.update(label="正在整理答案與引用頁碼…")
             time.sleep(0.55)
-            ask(incoming_question, api_key)
+            ask(incoming_question, github_token)
             analysis_status.update(label="分析完成", state="complete")
         st.rerun()
 
@@ -285,7 +294,9 @@ with claims_tab:
 
 with knowledge_tab:
     render_knowledge_overview(
-        info, api_key_configured=bool(api_key), offline_mode=bool(info and not api_key)
+        info,
+        github_token_configured=bool(github_token),
+        offline_mode=bool(info and not github_token),
     )
 
 st.markdown(
