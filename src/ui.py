@@ -27,6 +27,11 @@ def apply_styles() -> None:
         [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button span { font-size:0; }
         [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button span:before { content:"選擇檔案";font-size:.875rem; }
         [data-testid="stSidebar"] .stButton button { border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.08); color:white; }
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] { background:#f7fbff;border:1px solid rgba(99,221,199,.45);border-radius:10px; }
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] * { color:#0b2341!important; }
+        [data-testid="stSidebar"] .stSelectbox svg { fill:#0b2341!important; }
+        [role="listbox"] [role="option"] { color:#172b3f!important;background:#fff!important; }
+        [role="listbox"] [role="option"]:hover { background:#e7f6f3!important;color:#0d746d!important; }
         .block-container { max-width:1180px; padding-top:2.2rem; padding-bottom:2rem; }
         .brand-lockup { display:flex; align-items:center; gap:.8rem; margin:.4rem 0 2rem; }
         .brand-icon { width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,#38d3bd,#128d83);display:grid;place-items:center;font-weight:800;font-size:1.15rem;box-shadow:0 8px 22px rgba(22,163,148,.3); }
@@ -149,13 +154,13 @@ def render_knowledge_overview(
         """
         1. 解析 PDF 並保留每段文字的原始頁碼。
         2. 在伺服器本機搜尋最相關的條款，不另外呼叫 Embedding API。
-        3. 連線模式由 4o-mini 整理繁體中文答案；離線展示則使用預先核對的範例答案。
+        3. 連線模式由 4o-mini 整理繁體中文答案；離線查詢則使用預先核對的回答。
         4. 顯示引用頁碼與原文節錄，讓使用者自行核對。
         """
     )
     key_status = "已安全載入" if github_token_configured else "尚未設定"
     st.markdown(f"**4o-mini 連線：** {key_status}  ")
     if offline_mode:
-        st.info("目前使用離線展示模式：答案已預先依預設保單核對，不會向外部 AI 服務傳送資料。")
+        st.info("目前使用離線查詢模式：答案已預先依預設保單核對，不會向外部 AI 服務傳送資料。")
     st.markdown("**隱私設計：** 上傳的 PDF 僅存在目前伺服器工作階段的記憶體中。")
     st.warning("此系統是條款閱讀輔助工具，不構成保險、法律或醫療建議，也不代表最終理賠結果。")

@@ -348,7 +348,7 @@ def ask(question: str, github_token: str, role: str = "user") -> None:
         elif st.session_state.document_info.filename == DEFAULT_PDF:
             result = answer_offline(question)
         else:
-            raise RAGError("自訂 PDF 需要設定 API Key；離線展示僅支援預設保單。")
+            raise RAGError("自訂 PDF 需要設定 API Key；離線查詢僅支援預設保單。")
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -378,7 +378,7 @@ if st.session_state.get("user_role") not in ROLE_OPTIONS:
     st.session_state["user_role"] = "一般用戶"
 
 github_token = get_github_token()
-default_preset_label = "完整展示知識庫" if github_token else "課堂示範保單"
+default_preset_label = "綜合保險知識庫" if github_token else "主保單文件"
 
 with st.sidebar:
     st.markdown(
@@ -404,7 +404,7 @@ with st.sidebar:
         "預設知識庫",
         options=preset_labels,
         index=preset_index,
-        help="未上傳自訂 PDF 時，系統會使用這裡選擇的展示知識庫。",
+        help="未上傳自訂 PDF 時，系統會使用這裡選擇的知識庫。",
     )
     selected_preset_info = next(
         item for item in KNOWLEDGE_DOCS if item["label"] == selected_preset
@@ -446,10 +446,10 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     elif not github_token:
-        st.warning("離線展示模式僅支援預設保單。")
+        st.warning("離線查詢模式僅支援預設保單。")
 
     if info and not github_token:
-        st.info("目前為免 API 離線展示模式，可使用四個範例問題。")
+        st.info("目前為離線查詢模式，可使用四個預設問題。")
 
     # [修改 10] 將隱私說明移至側邊欄知識庫狀態下方。
     st.caption("隱私說明：上傳的 PDF 僅存於當前工作階段記憶體，關閉頁面後自動清除。")
@@ -474,15 +474,15 @@ current_role = ROLE_OPTIONS.get(st.session_state["user_role"], "user")
 staff_mode = current_role == "staff"
 
 if staff_mode:
-    hero_eyebrow = "SERVICE WORKBENCH"
-    hero_title = "客服查條款，\n回覆更有底。"
-    hero_subtitle = "整合多份保險文件，提供頁碼、信心分數、話術與案件摘要。"
+    hero_eyebrow = "客服查核工作台"
+    hero_title = "客戶問題進來，\n條款依據出去。"
+    hero_subtitle = "快速比對保單與保險問答資料，整理頁碼、信心分數與可回覆話術。"
     hero_icon = "💼"
     trust_items = ["條款依據與頁碼", "信心分數可見", "案件摘要可複製"]
 else:
-    hero_eyebrow = "POLICY HELPER"
-    hero_title = "看懂保障，\n不用自己猜。"
-    hero_subtitle = "用白話說明保單條款、理賠準備文件與需要注意的限制。"
+    hero_eyebrow = "保戶條款助理"
+    hero_title = "保障問題，\n直接問清楚。"
+    hero_subtitle = "輸入住院、手術或理賠情境，系統用白話整理條款依據與下一步。"
     hero_icon = "✓"
     trust_items = ["白話回答", "附參考頁碼", "不取代正式理賠審核"]
 
@@ -502,7 +502,7 @@ st.markdown(
 )
 
 # [修改 10] 精簡頂部狀態列，移除工作階段標籤。
-status_text = "4o-mini 已連線" if info and github_token else "離線展示模式" if info else "等待設定"
+status_text = "4o-mini 已連線" if info and github_token else "離線查詢模式" if info else "等待設定"
 st.markdown(
     f"""
     <div class="trust-row">
@@ -617,7 +617,7 @@ with primary_tab:
                     if github_token:
                         st.caption("本回答由 4o-mini 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
                     else:
-                        st.caption("離線展示答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
+                        st.caption("離線答案已預先依保單核對，僅供參考；實際理賠以保險公司審核為準。")
                     # [修改5] 一般用戶模式保留手動複製按鈕；不顯示業務摘要/話術工作流。
                     col1, col2 = st.columns([6, 1])
                     with col2:

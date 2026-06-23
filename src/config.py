@@ -2,13 +2,13 @@ APP_NAME = "安心保｜AI 保險助理"
 DEFAULT_PDF = "insurance.pdf"
 KNOWLEDGE_DOCS = [
     {
-        "label": "課堂示範保單",
-        "description": "原始 insurance.pdf，適合快速展示保單問答。",
+        "label": "主保單文件",
+        "description": "以主要保單條款作為回答依據，適合查詢保障範圍與理賠文件。",
         "files": ["insurance.pdf"],
     },
     {
-        "label": "完整展示知識庫",
-        "description": "保單 + 人壽契約範本 + 人身保險 Q&A，適合課堂展示與客服查核。",
+        "label": "綜合保險知識庫",
+        "description": "整合主保單、人壽契約範本與人身保險 Q&A，適合完整條款查核。",
         "files": [
             "insurance.pdf",
             "knowledge_docs/uploaddowndoc.pdf",
