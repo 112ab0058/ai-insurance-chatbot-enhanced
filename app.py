@@ -504,9 +504,10 @@ st.markdown(
 
 # [修改 10] 精簡頂部狀態列，移除工作階段標籤。
 status_text = "4o-mini 已連線" if info and github_token else "離線查詢模式" if info else "等待設定"
+trust_row_class = "trust-row staff-mode" if staff_mode else "trust-row"
 st.markdown(
     f"""
-    <div class="trust-row">
+    <div class="{trust_row_class}">
       <span>● {status_text}</span><span>{trust_items[0]}</span>
       <span>{trust_items[1]}</span><span>{trust_items[2]}</span>
     </div>
@@ -569,7 +570,16 @@ with primary_tab:
             if message["role"] == "assistant" and sources:
                 if staff_mode:
                     top_confidence = max_source_confidence(sources)
-                    st.info(f"AI 查核信心：{top_confidence} / 100；低信心回答請人工複核原文。")
+                    confidence_class = "high" if top_confidence >= 70 else "medium"
+                    st.markdown(
+                        f"""
+                        <span class="confidence-badge {confidence_class}">
+                            AI 查核信心：{top_confidence} / 100
+                        </span>
+                        <span class="confidence-note">低信心回答請人工複核原文。</span>
+                        """,
+                        unsafe_allow_html=True,
+                    )
                     with st.expander("📄 引用條文（點擊展開查看依據）"):
                         for source_index, source in enumerate(sources):
                             confidence = source_confidence(source)

@@ -50,6 +50,12 @@ def apply_styles() -> None:
         .hero-shield { position:relative;z-index:1;min-width:96px;height:112px;margin-left:2rem;clip-path:polygon(50% 0,95% 18%,87% 70%,50% 100%,13% 70%,5% 18%);background:linear-gradient(145deg,#37d5bd,#0b8e86);display:grid;place-items:center;font-size:2.4rem;font-weight:800;box-shadow:0 20px 35px rgba(0,0,0,.18); }
         .trust-row { display:flex;gap:1.2rem;flex-wrap:wrap;padding:1rem 1.3rem;margin:1rem 0 1.6rem;background:white;border:1px solid #e3ebf0;border-radius:14px;color:#5b6e80;font-size:.82rem;box-shadow:0 5px 18px rgba(12,38,66,.04); }
         .trust-row span:first-child { color:#138b7f;font-weight:700; }
+        .trust-row.staff-mode { background:#f6f9fc;border-color:#d5e1ea;border-left:4px solid #5f7f9d;box-shadow:0 6px 20px rgba(64,91,118,.08); }
+        .trust-row.staff-mode span:first-child { color:#355f7f;font-weight:800; }
+        .confidence-badge { display:inline-flex;align-items:center;gap:.35rem;border-radius:999px;padding:.35rem .75rem;font-weight:800;font-size:.86rem;margin:.35rem 0 .55rem; }
+        .confidence-badge.high { background:#d4edda;color:#155724;border:1px solid #b7dfc0; }
+        .confidence-badge.medium { background:#fff3cd;color:#856404;border:1px solid #f1df9a; }
+        .confidence-note { color:#5f6f7d;font-size:.82rem;margin-left:.5rem; }
         [data-baseweb="tab-list"] { gap:.4rem;background:white;padding:.45rem;border-radius:15px;border:1px solid #e4ebf0; }
         [data-baseweb="tab"] { border-radius:11px;padding:.65rem 1.1rem; }
         [aria-selected="true"] { background:#e7f6f3!important;color:#0d746d!important; }
