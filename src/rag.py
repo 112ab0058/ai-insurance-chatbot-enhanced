@@ -26,6 +26,10 @@ SIMILARITY_THRESHOLD = 0.35
 BM25_WEIGHT = 0.5
 VECTOR_WEIGHT = 0.5
 LOW_CONFIDENCE_MESSAGE = "保單條款中找不到明確依據，建議聯繫客服或業務人員確認"
+STAFF_LOW_CONFIDENCE_MESSAGE = (
+    "系統檢索信心不足，尚無法形成穩定條款判斷；請直接查閱引用原文頁碼，"
+    "並由承辦人員人工複核後再回覆客戶。"
+)
 
 
 SYSTEM_PROMPT = """你是安心保 AI 保險助理，專門根據使用者上傳的保單條文回答問題。請使用一般用戶容易理解的語言，並強調回答僅供參考、實際理賠仍須由保險公司審核。
@@ -70,6 +74,20 @@ def get_system_prompt(role: str = "user") -> str:
     if role == "staff":
         return PROFESSIONAL_SYSTEM_PROMPT
     return SYSTEM_PROMPT
+
+
+def get_low_confidence_message(role: str = "user", sources: Sequence["Source"] = ()) -> str:
+    """Return role-aware fallback text before any model call is made."""
+    if role == "staff":
+        pages = sorted({source.page for source in sources})
+        if pages:
+            page_text = "、".join(f"第 {page} 頁" for page in pages[:3])
+            return (
+                f"系統檢索信心不足，建議優先查閱引用原文 {page_text}，"
+                "並由承辦人員人工複核後再回覆客戶。"
+            )
+        return STAFF_LOW_CONFIDENCE_MESSAGE
+    return LOW_CONFIDENCE_MESSAGE
 
 
 class RAGError(ValueError):
@@ -303,13 +321,13 @@ def answer_question(
         raise RAGError("問題不能是空白。")
     results = vectorstore.similarity_search_with_score(question, k=3)
     if not results:
-        return RAGAnswer(LOW_CONFIDENCE_MESSAGE, [], low_confidence=True)
+        return RAGAnswer(get_low_confidence_message(role), [], low_confidence=True)
 
     context, sources = format_context(results)
     highest_confidence = max((source.relevance for source in sources), default=0.0)
     if highest_confidence < SIMILARITY_THRESHOLD:
         return RAGAnswer(
-            LOW_CONFIDENCE_MESSAGE,
+            get_low_confidence_message(role, sources),
             sources,
             low_confidence=True,
         )
