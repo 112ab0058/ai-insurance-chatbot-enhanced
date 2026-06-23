@@ -9,6 +9,7 @@ from src.rag import (
     answer_question,
     build_prompt,
     compute_file_hash,
+    expand_query_for_search,
     format_context,
     score_to_relevance,
     split_documents,
@@ -18,7 +19,7 @@ from src.rag import (
 
 class FakeVectorStore:
     def similarity_search_with_score(self, question, k):
-        assert question == "美容手術可以理賠嗎？"
+        assert "美容手術可以理賠嗎？" in question
         assert k == 3
         return [
             (
@@ -91,6 +92,34 @@ def test_local_search_finds_relevant_chinese_clause_without_api():
         ]
     )
     results = store.similarity_search_with_score("美容手術可以理賠嗎？", k=1)
+    assert results[0][0].metadata["page"] == 1
+
+
+def test_medically_necessary_cosmetic_query_expands_to_reconstruction_terms():
+    expanded = expand_query_for_search("如果醫生說手術是治療必要，不是單純醫美，保險公司會怎麼判斷？")
+
+    assert "美容手術" in expanded
+    assert "外科整型" in expanded
+    assert "重建基本功能" in expanded
+
+
+def test_cosmetic_medical_necessity_search_prefers_cosmetic_clause_over_dental():
+    store = LocalVectorStore(
+        [
+            Document(
+                page_content="非因當次住院事故治療之目的所進行之牙科手術，本公司不負給付責任。",
+                metadata={"page": 0},
+            ),
+            Document(
+                page_content="美容手術、外科整型。但為重建其基本功能所作之必要整型，不在此限。",
+                metadata={"page": 1},
+            ),
+        ]
+    )
+
+    query = expand_query_for_search("如果醫生說手術是治療必要，不是單純醫美，保險公司會怎麼判斷？")
+    results = store.similarity_search_with_score(query, k=1)
+
     assert results[0][0].metadata["page"] == 1
 
 

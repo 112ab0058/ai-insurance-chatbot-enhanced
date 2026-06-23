@@ -14,6 +14,10 @@ from src.config import (
     KNOWLEDGE_DOCS,
     MODEL_NAME,
 )
+from src.guardrails import (
+    is_personal_policy_question,
+    personal_policy_boundary_answer,
+)
 from src.offline import answer_offline
 from src.rag import (
     DocumentInfo,
@@ -315,6 +319,22 @@ def ask(question: str, github_token: str, role: str = "user") -> None:
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
         return
+
+    if is_personal_policy_question(question):
+        st.session_state.messages.append(
+            {"role": "user", "content": question, "sources": []}
+        )
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": personal_policy_boundary_answer(role),
+                "sources": [],
+                "low_confidence": True,
+                "guardrail": "personal_policy_data",
+            }
+        )
+        return
+
     if "vectorstore" not in st.session_state:
         st.error("知識庫尚未就緒，請稍後重試或重新上傳 PDF。")
         return
