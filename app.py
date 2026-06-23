@@ -119,6 +119,26 @@ def extract_client_script(answer: str) -> str:
     return f"{brief}\n\n提醒您：實際理賠仍需依保單條款與保險公司審核結果為準。"
 
 
+def describe_confidence_for_user(confidence: float) -> str:
+    """Convert confidence into user-facing wording without exposing raw scores."""
+    if confidence >= 70:
+        return "已找到明確依據"
+    if confidence >= 40:
+        return "找到相關條款，但內容不夠明確，建議再次確認"
+    return ""
+
+
+def source_confidence(source: dict) -> int:
+    score = float(source.get("score", 1.0))
+    return max(0, round(100 - score * 100))
+
+
+def max_source_confidence(sources: list[dict]) -> int:
+    if not sources:
+        return 0
+    return max(source_confidence(source) for source in sources)
+
+
 def extract_key_numbers(chunks: list | None, limit: int = 12) -> list[dict[str, str]]:
     """Extract key policy numbers locally from chunks with regex; no LLM call."""
     if not chunks:
@@ -412,11 +432,11 @@ current_role = ROLE_OPTIONS.get(st.session_state["user_role"], "user")
 staff_mode = current_role == "staff"
 chunks = getattr(st.session_state.get("vectorstore"), "documents", [])
 tab_labels = (
-    ["💼 客戶協助工作台", "📋 理賠指南", "🛠️ 系統與知識庫狀態"]
+    ["💼 客戶案件工作台", "📤 客戶紀錄與呈報", "🛠️ 系統與保單狀態"]
     if staff_mode
-    else ["💬 AI 條款問答", "📋 理賠指南", "📚 知識庫資訊"]
+    else ["💬 我的保單問答", "📋 理賠怎麼申請", "📄 我的文件"]
 )
-primary_tab, claims_tab, knowledge_tab = st.tabs(tab_labels)
+primary_tab, secondary_tab, tertiary_tab = st.tabs(tab_labels)
 
 with primary_tab:
     # [角色分流] 業務/客服模式使用工作台版面；一般用戶模式維持原本 AI 條款問答。
@@ -434,15 +454,9 @@ with primary_tab:
         st.stop()
 
     if staff_mode:
+        st.markdown("### 案件輸入區")
+        st.caption("請在下方輸入客戶詢問或條款查核問題；系統會回傳條款依據、頁碼與可複製話術。")
         render_key_number_summary(chunks)
-        st.markdown("### 📤 整理客戶問題摘要")
-        st.caption("此摘要由目前對話紀錄直接整理，不呼叫 AI，適合複製到內部紀錄或交接單。")
-        st.text_area(
-            "客戶問題摘要",
-            value=build_handoff_summary(st.session_state.messages),
-            height=190,
-            key="staff_handoff_summary_text",
-        )
     else:
         st.markdown("#### 常見問題")
         quick_questions = {
@@ -466,21 +480,42 @@ with primary_tab:
             sources = message.get("sources", [])
             # [修改2] 從 messages 內持久化的 content/page/score 重建引用條文。
             if message["role"] == "assistant" and sources:
-                with st.expander("📄 引用條文（點擊展開查看依據）"):
-                    for source_index, source in enumerate(sources):
-                        score = float(source.get("score", 1.0))
-                        confidence = max(0, round(100 - score * 100))
-                        page = source.get("page", "未知")
-                        content = source.get("content", "")[:300]
-                        st.markdown(
-                            f"""
+                if staff_mode:
+                    top_confidence = max_source_confidence(sources)
+                    st.info(f"AI 查核信心：{top_confidence} / 100；低信心回答請人工複核原文。")
+                    with st.expander("📄 引用條文（點擊展開查看依據）"):
+                        for source_index, source in enumerate(sources):
+                            confidence = source_confidence(source)
+                            page = source.get("page", "未知")
+                            content = source.get("content", "")[:300]
+                            st.markdown(
+                                f"""
 **【來源 {source_index + 1}】** 頁碼：第 {page} 頁　｜　相似度：**{confidence} / 100**
 
 > {content}
 
 ---
 """
-                        )
+                            )
+                elif not message.get("low_confidence"):
+                    confidence_text = describe_confidence_for_user(
+                        max_source_confidence(sources)
+                    )
+                    if confidence_text:
+                        st.success(f"依據狀態：{confidence_text}")
+                    with st.expander("📄 參考條文（點擊展開查看頁碼）"):
+                        for source_index, source in enumerate(sources):
+                            page = source.get("page", "未知")
+                            content = source.get("content", "")[:220]
+                            st.markdown(
+                                f"""
+**【參考 {source_index + 1}】** 頁碼：第 {page} 頁
+
+> {content}
+
+---
+"""
+                            )
             if message["role"] == "assistant":
                 if staff_mode:
                     st.caption("業務/客服模式：回答含條款判斷與客戶溝通建議；實際承保與理賠仍須人工複核。")
@@ -528,10 +563,38 @@ with primary_tab:
                 ask(user_input, github_token, current_role)
         st.rerun()
 
-with claims_tab:
-    render_claims_guide()
+with secondary_tab:
+    if staff_mode:
+        st.markdown("### 📤 客戶紀錄與呈報")
+        st.caption("以下內容由目前對話紀錄直接整理，不呼叫 AI；可貼到 CRM、交接紀錄或內部呈報。")
+        st.text_area(
+            "完整案件摘要",
+            value=build_handoff_summary(st.session_state.messages),
+            height=260,
+            key="staff_case_report_text",
+        )
+        low_confidence_items = []
+        pending_question = ""
+        for message in st.session_state.messages:
+            if message.get("role") == "user":
+                pending_question = str(message.get("content", "")).strip()
+            elif message.get("role") == "assistant" and pending_question:
+                if message.get("low_confidence"):
+                    low_confidence_items.append(pending_question)
+                pending_question = ""
+        st.markdown("### 低信心問題清單")
+        if low_confidence_items:
+            for index, question in enumerate(low_confidence_items, start=1):
+                st.warning(f"{index}. {question}")
+        else:
+            st.success("目前對話中沒有被標記為低信心的回答。")
+        if st.button("清除案件紀錄", use_container_width=True, icon="🧹"):
+            reset_messages()
+            st.rerun()
+    else:
+        render_claims_guide()
 
-with knowledge_tab:
+with tertiary_tab:
     if staff_mode:
         render_staff_system_status(
             info,
@@ -540,12 +603,25 @@ with knowledge_tab:
             chunks=chunks,
         )
     else:
-        render_knowledge_overview(
-            info,
-            github_token_configured=bool(github_token),
-            offline_mode=bool(info and not github_token),
-            chunks=chunks,
-        )
+        st.markdown("### 我的文件")
+        if info:
+            safe_filename = escape(info.filename)
+            st.markdown(
+                f"""
+                <div class="info-grid">
+                  <div class="info-card"><small>目前文件</small><strong>{safe_filename}</strong></div>
+                  <div class="info-card"><small>文件頁數</small><strong>{info.page_count} 頁</strong></div>
+                  <div class="info-card"><small>文件狀態</small><strong>已建立，可開始提問</strong></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.info("如果要更換保單，請使用左側「文件中心」重新上傳 PDF。")
+        else:
+            st.warning("目前尚未建立文件，請先從左側文件中心上傳或載入預設 PDF。")
+        st.markdown("### 隱私說明")
+        st.markdown("上傳的 PDF 僅存於當前工作階段記憶體，關閉頁面後會自動清除。")
+        st.warning("此工具協助閱讀保單條款，不代表正式理賠結果。")
 
 st.markdown(
     '<footer>2026 人工智慧跨域專題實作 · 安心保 AI 保險助理</footer>',
