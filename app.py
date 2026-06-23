@@ -33,6 +33,7 @@ WELCOME_MESSAGE = {
         "申請文件等問題；我的回答會附上保單條款頁碼，方便您核對原文。"
     ),
     "sources": [],
+    "low_confidence": False,
 }
 
 
@@ -57,6 +58,37 @@ def cached_knowledge_base(
 
 def reset_messages() -> None:
     st.session_state.messages = [WELCOME_MESSAGE.copy()]
+
+
+def build_handoff_summary(messages: list[dict]) -> str:
+    """Build a copyable handoff summary locally without calling an LLM."""
+    pairs: list[tuple[str, str]] = []
+    low_confidence_questions: list[str] = []
+    pending_question = ""
+
+    for message in messages:
+        if message.get("role") == "user":
+            pending_question = str(message.get("content", "")).strip()
+        elif message.get("role") == "assistant" and pending_question:
+            answer = " ".join(str(message.get("content", "")).split())
+            answer_brief = answer if len(answer) <= 180 else f"{answer[:180].rstrip()}…"
+            pairs.append((pending_question, answer_brief))
+            if message.get("low_confidence"):
+                low_confidence_questions.append(pending_question)
+            pending_question = ""
+
+    lines = ["客戶詢問摘要："]
+    if pairs:
+        lines.extend(
+            f"{index}. {question} → {answer}"
+            for index, (question, answer) in enumerate(pairs, start=1)
+        )
+    else:
+        lines.append("（目前尚無客戶提問）")
+
+    flagged = "、".join(low_confidence_questions) or "無"
+    lines.append(f"建議承辦人員確認事項：{flagged}")
+    return "\n".join(lines)
 
 
 def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> None:
@@ -95,8 +127,8 @@ def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
     reset_messages()
 
 
-# [修改3] AI 回答會套用 src.rag.SYSTEM_PROMPT 定義的三段式結構。
-def ask(question: str, github_token: str) -> None:
+# [修改3] AI 回答會依使用者角色套用對應的結構化提示詞。
+def ask(question: str, github_token: str, role: str = "一般用戶") -> None:
     question = question.strip()
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
@@ -110,19 +142,28 @@ def ask(question: str, github_token: str) -> None:
     )
     try:
         prior_messages = st.session_state.messages[:-1]
-        cache_key = f"{st.session_state.get('document_hash', '')}:{question}"
+        cache_key = f"{st.session_state.get('document_hash', '')}:{role}:{question}"
         cached_result = st.session_state.setdefault("answer_cache", {}).get(cache_key)
         if cached_result:
-            answer, sources = cached_result
-            result = RAGAnswer(answer=answer, sources=sources)
+            answer, sources, low_confidence = cached_result
+            result = RAGAnswer(
+                answer=answer,
+                sources=sources,
+                low_confidence=low_confidence,
+            )
         elif github_token:
             result = answer_question(
                 st.session_state.vectorstore,
                 question,
                 github_token,
                 chat_history=prior_messages[-4:],
+                role=role,
             )
-            st.session_state.answer_cache[cache_key] = (result.answer, result.sources)
+            st.session_state.answer_cache[cache_key] = (
+                result.answer,
+                result.sources,
+                result.low_confidence,
+            )
         elif st.session_state.document_info.filename == DEFAULT_PDF:
             result = answer_offline(question)
         else:
@@ -132,6 +173,7 @@ def ask(question: str, github_token: str) -> None:
                 "role": "assistant",
                 "content": result.answer,
                 "sources": [source.to_dict() for source in result.sources],
+                "low_confidence": result.low_confidence,
             }
         )
     except Exception as exc:  # The UI must remain usable if an external API fails.
@@ -140,6 +182,7 @@ def ask(question: str, github_token: str) -> None:
                 "role": "assistant",
                 "content": friendly_error(exc),
                 "sources": [],
+                "low_confidence": False,
             }
         )
 
@@ -150,6 +193,8 @@ if "messages" not in st.session_state:
 # [修改1] pending_question 讓常見問題按鈕在 rerun 後自動送出。
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = ""
+if st.session_state.get("user_role") not in {"一般用戶", "保險業務/客服"}:
+    st.session_state["user_role"] = "一般用戶"
 
 github_token = get_github_token()
 default_path = Path(DEFAULT_PDF)
@@ -163,6 +208,13 @@ with st.sidebar:
         </div>
         """,
         unsafe_allow_html=True,
+    )
+    st.radio(
+        "使用角色",
+        options=["一般用戶", "保險業務/客服"],
+        key="user_role",
+        horizontal=True,
+        help="業務/客服模式會使用較完整的條款說明與客戶話術建議。",
     )
     st.markdown("### 文件中心")
     uploaded_file = st.file_uploader(
@@ -329,6 +381,16 @@ with chat_tab:
                         key=f"textarea_{message_index}",
                     )
 
+    if st.button("轉接真人客服", use_container_width=True, icon="☎️"):
+        st.session_state["show_handoff_summary"] = True
+    if st.session_state.get("show_handoff_summary"):
+        st.text_area(
+            "客服轉接摘要（可複製貼給承辦人員）",
+            value=build_handoff_summary(st.session_state.messages),
+            height=220,
+            key="handoff_summary_text",
+        )
+
     has_knowledge_base = bool(info and st.session_state.get("vectorstore"))
 
     # [修改1] 優先取出快速問題，直接走入與手動輸入相同的問答流程。
@@ -345,7 +407,7 @@ with chat_tab:
         # [修改4] 呼叫 4o-mini 前在 assistant 對話泡泡中顯示 Typing Indicator。
         with st.chat_message("assistant", avatar="🛡️"):
             with st.spinner("安心保正在查詢保單條款中..."):
-                ask(user_input, github_token)
+                ask(user_input, github_token, st.session_state["user_role"])
         st.rerun()
 
 with claims_tab:

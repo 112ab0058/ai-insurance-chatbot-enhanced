@@ -1,0 +1,77 @@
+[
+  {
+    "question": "骨折住院是否在保險範圍內？",
+    "expected_keywords": ["住院", "傷害"],
+    "expected_page": 1
+  },
+  {
+    "question": "住院醫療費用保險金包含哪些項目？",
+    "expected_keywords": ["住院醫療費用", "藥"],
+    "expected_page": 1
+  },
+  {
+    "question": "同一次住院的給付是否有上限？",
+    "expected_keywords": ["同一次住院", "保險金額"],
+    "expected_page": 1
+  },
+  {
+    "question": "美容手術可以申請理賠嗎？",
+    "expected_keywords": ["美容", "重建基本功能"],
+    "expected_page": 2
+  },
+  {
+    "question": "變性手術是否屬於保障範圍？",
+    "expected_keywords": ["變性手術", "不負給付"],
+    "expected_page": 2
+  },
+  {
+    "question": "預防性手術的醫療費用會給付嗎？",
+    "expected_keywords": ["預防性手術"],
+    "expected_page": 2
+  },
+  {
+    "question": "無法提供收據正本時如何計算住院給付？",
+    "expected_keywords": ["百分之二", "住院日數"],
+    "expected_page": 2
+  },
+  {
+    "question": "申請住院醫療費用保險金需要哪些文件？",
+    "expected_keywords": ["保險金申請書", "診斷證明書"],
+    "expected_page": 4
+  },
+  {
+    "question": "理賠申請是否需要醫療費用收據正本？",
+    "expected_keywords": ["醫療費用收據正本"],
+    "expected_page": 4
+  },
+  {
+    "question": "發生保險事故後幾日內要通知保險公司？",
+    "expected_keywords": ["十日", "通知"],
+    "expected_page": 4
+  },
+  {
+    "question": "保險公司收齊文件後多久應給付保險金？",
+    "expected_keywords": ["十五日", "給付"],
+    "expected_page": 4
+  },
+  {
+    "question": "住院醫療保險金的受益人是誰？",
+    "expected_keywords": ["被保險人本人", "受益人"],
+    "expected_page": 4
+  },
+  {
+    "question": "掛號費與證明文件費是否給付？",
+    "expected_keywords": ["掛號費", "證明文件"],
+    "expected_page": 2
+  },
+  {
+    "question": "超等住院的病房差額是否在給付範圍？",
+    "expected_keywords": ["病房費差額"],
+    "expected_page": 2
+  },
+  {
+    "question": "救護車費是否屬於可申請的住院費用？",
+    "expected_keywords": ["救護車費"],
+    "expected_page": 2
+  }
+]
