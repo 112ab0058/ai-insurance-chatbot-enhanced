@@ -37,6 +37,12 @@ WELCOME_MESSAGE = {
 }
 
 
+ROLE_OPTIONS = {
+    "一般用戶": "user",
+    "保險業務/客服": "staff",
+}
+
+
 def get_github_token() -> str:
     """Read the 4o-mini service token from the environment or Streamlit Secrets."""
     token = os.getenv("GITHUB_TOKEN", "").strip()
@@ -127,8 +133,8 @@ def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
     reset_messages()
 
 
-# [修改3] AI 回答會依使用者角色套用對應的結構化提示詞。
-def ask(question: str, github_token: str, role: str = "一般用戶") -> None:
+# [修改3] AI 回答會依使用者角色代碼 user/staff 套用對應的結構化提示詞。
+def ask(question: str, github_token: str, role: str = "user") -> None:
     question = question.strip()
     if not question:
         st.warning("請先輸入問題，再送出查詢。")
@@ -193,7 +199,7 @@ if "messages" not in st.session_state:
 # [修改1] pending_question 讓常見問題按鈕在 rerun 後自動送出。
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = ""
-if st.session_state.get("user_role") not in {"一般用戶", "保險業務/客服"}:
+if st.session_state.get("user_role") not in ROLE_OPTIONS:
     st.session_state["user_role"] = "一般用戶"
 
 github_token = get_github_token()
@@ -211,7 +217,7 @@ with st.sidebar:
     )
     st.radio(
         "使用角色",
-        options=["一般用戶", "保險業務/客服"],
+        options=list(ROLE_OPTIONS.keys()),
         key="user_role",
         horizontal=True,
         help="業務/客服模式會使用較完整的條款說明與客戶話術建議。",
@@ -405,9 +411,10 @@ with chat_tab:
         user_input = typed_question
     if user_input:
         # [修改4] 呼叫 4o-mini 前在 assistant 對話泡泡中顯示 Typing Indicator。
+        selected_role = ROLE_OPTIONS.get(st.session_state["user_role"], "user")
         with st.chat_message("assistant", avatar="🛡️"):
             with st.spinner("安心保正在查詢保單條款中..."):
-                ask(user_input, github_token, st.session_state["user_role"])
+                ask(user_input, github_token, selected_role)
         st.rerun()
 
 with claims_tab:
