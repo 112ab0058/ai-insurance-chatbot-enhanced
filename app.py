@@ -8,7 +8,13 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.config import APP_NAME, DEFAULT_PDF, GITHUB_MODELS_BASE_URL, MODEL_NAME
+from src.config import (
+    APP_NAME,
+    DEFAULT_PDF,
+    GITHUB_MODELS_BASE_URL,
+    KNOWLEDGE_DOCS,
+    MODEL_NAME,
+)
 from src.offline import answer_offline
 from src.rag import (
     DocumentInfo,
@@ -16,7 +22,7 @@ from src.rag import (
     RAGError,
     SIMILARITY_THRESHOLD,
     answer_question,
-    build_knowledge_base,
+    build_multi_knowledge_base,
     compute_file_hash,
     friendly_error,
 )
@@ -58,14 +64,36 @@ def get_github_token() -> str:
 
 @st.cache_resource(show_spinner=False)
 def cached_knowledge_base(
-    document_hash: str, pdf_bytes: bytes, filename: str, _github_token: str
+    document_hash: str, document_payloads: tuple[tuple[str, bytes], ...], _github_token: str
 ):
     """Cache local PDF parsing and search index by document hash."""
-    return build_knowledge_base(pdf_bytes, filename)
+    return build_multi_knowledge_base(document_payloads)
 
 
 def reset_messages() -> None:
     st.session_state.messages = [WELCOME_MESSAGE.copy()]
+
+
+def compute_documents_hash(document_payloads: tuple[tuple[str, bytes], ...]) -> str:
+    joined = b"".join(
+        filename.encode("utf-8") + b"\0" + data
+        for filename, data in document_payloads
+    )
+    return compute_file_hash(joined)
+
+
+def load_preset_payloads(selected_label: str) -> tuple[tuple[str, bytes], ...]:
+    preset = next(
+        (item for item in KNOWLEDGE_DOCS if item["label"] == selected_label),
+        KNOWLEDGE_DOCS[0],
+    )
+    payloads: list[tuple[str, bytes]] = []
+    for file_path in preset["files"]:
+        path = Path(file_path)
+        if not path.exists():
+            continue
+        payloads.append((path.name, path.read_bytes()))
+    return tuple(payloads)
 
 
 def build_handoff_summary(messages: list[dict]) -> str:
@@ -186,6 +214,43 @@ def render_key_number_summary(chunks: list | None) -> None:
         st.info("目前未從條款中擷取到明確關鍵數字，建議改用條款關鍵字搜尋或直接查看 PDF 原文。")
 
 
+def render_staff_case_snapshot(info: DocumentInfo | None, document_sources: list[str]) -> None:
+    st.markdown("### 案件查核總覽")
+    file_count = len(document_sources) if document_sources else 0
+    chunk_count = info.chunk_count if info else 0
+    page_count = info.page_count if info else 0
+    st.markdown(
+        f"""
+        <div class="info-grid">
+          <div class="info-card"><small>目前知識庫</small><strong>{file_count} 份文件</strong></div>
+          <div class="info-card"><small>可查頁數</small><strong>{page_count} 頁</strong></div>
+          <div class="info-card"><small>檢索區塊</small><strong>{chunk_count} 個</strong></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if document_sources:
+        st.caption("目前文件：" + "、".join(document_sources))
+    st.info("客服工作台會顯示信心分數與引用頁碼；低信心回答請以原文與人工複核為準。")
+
+
+def build_citation_rows(messages: list[dict]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for source in message.get("sources", []):
+            rows.append(
+                {
+                    "文件": str(source.get("source", "預設保單")),
+                    "頁碼": f"第 {source.get('page', '未知')} 頁",
+                    "信心": f"{source_confidence(source)} / 100",
+                    "節錄": str(source.get("content", ""))[:120],
+                }
+            )
+    return rows
+
+
 def render_staff_system_status(
     info: DocumentInfo | None,
     github_token_configured: bool,
@@ -214,8 +279,14 @@ def render_staff_system_status(
 
 
 def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> None:
+    activate_documents(((filename, pdf_bytes),), github_token)
+
+
+def activate_documents(
+    document_payloads: tuple[tuple[str, bytes], ...], github_token: str
+) -> None:
     """Build and activate a document only after the new index succeeds."""
-    document_hash = compute_file_hash(pdf_bytes)
+    document_hash = compute_documents_hash(document_payloads)
     if (
         document_hash == st.session_state.get("document_hash")
         and "vectorstore" in st.session_state
@@ -223,30 +294,18 @@ def activate_document(pdf_bytes: bytes, filename: str, github_token: str) -> Non
         return
 
     vectorstore, document_info = cached_knowledge_base(
-        document_hash, pdf_bytes, filename, github_token
+        document_hash, document_payloads, github_token
     )
     st.session_state.vectorstore = vectorstore
     st.session_state.document_info = document_info
     st.session_state.document_hash = document_hash
+    st.session_state.document_sources = [filename for filename, _ in document_payloads]
     st.session_state.answer_cache = {}
     reset_messages()
 
 
 def activate_offline_document(pdf_bytes: bytes, filename: str) -> None:
-    document_hash = compute_file_hash(pdf_bytes)
-    if (
-        document_hash == st.session_state.get("document_hash")
-        and "vectorstore" in st.session_state
-    ):
-        return
-    vectorstore, document_info = cached_knowledge_base(
-        document_hash, pdf_bytes, filename, ""
-    )
-    st.session_state.vectorstore = vectorstore
-    st.session_state.document_info = document_info
-    st.session_state.document_hash = document_hash
-    st.session_state.answer_cache = {}
-    reset_messages()
+    activate_documents(((filename, pdf_bytes),), "")
 
 
 # [修改3] AI 回答會依使用者角色代碼 user/staff 套用對應的結構化提示詞。
@@ -319,7 +378,7 @@ if st.session_state.get("user_role") not in ROLE_OPTIONS:
     st.session_state["user_role"] = "一般用戶"
 
 github_token = get_github_token()
-default_path = Path(DEFAULT_PDF)
+default_preset_label = "完整展示知識庫" if github_token else "課堂示範保單"
 
 with st.sidebar:
     st.markdown(
@@ -339,29 +398,38 @@ with st.sidebar:
         help="業務/客服模式會使用較完整的條款說明與客戶話術建議。",
     )
     st.markdown("### 文件中心")
+    preset_labels = [item["label"] for item in KNOWLEDGE_DOCS]
+    preset_index = preset_labels.index(default_preset_label) if default_preset_label in preset_labels else 0
+    selected_preset = st.selectbox(
+        "預設知識庫",
+        options=preset_labels,
+        index=preset_index,
+        help="未上傳自訂 PDF 時，系統會使用這裡選擇的展示知識庫。",
+    )
+    selected_preset_info = next(
+        item for item in KNOWLEDGE_DOCS if item["label"] == selected_preset
+    )
+    st.caption(selected_preset_info["description"])
     uploaded_file = st.file_uploader(
         "替換知識文件",
         type=["pdf"],
         help="僅在本次瀏覽工作階段使用，不會保存到伺服器。",
     )
     if uploaded_file is not None:
-        candidate_bytes = uploaded_file.getvalue()
-        candidate_name = uploaded_file.name
+        document_payloads = ((uploaded_file.name, uploaded_file.getvalue()),)
+        active_source_label = f"自訂上傳：{uploaded_file.name}"
     else:
-        candidate_bytes = default_path.read_bytes() if default_path.exists() else b""
-        candidate_name = default_path.name
+        document_payloads = load_preset_payloads(selected_preset)
+        active_source_label = selected_preset
 
-    if candidate_bytes:
+    if document_payloads:
         try:
             with st.spinner("正在解析保單文件…"):
-                if github_token:
-                    activate_document(candidate_bytes, candidate_name, github_token)
-                else:
-                    activate_offline_document(candidate_bytes, candidate_name)
+                activate_documents(document_payloads, github_token)
         except Exception as exc:
             st.error(f"新文件無法建立索引：{friendly_error(exc)}")
-    elif not candidate_bytes:
-        st.error("找不到預設 insurance.pdf。")
+    else:
+        st.error("找不到預設知識庫 PDF，請確認專案文件是否存在。")
 
     info: DocumentInfo | None = st.session_state.get("document_info")
     if info:
@@ -370,7 +438,8 @@ with st.sidebar:
             f"""
             <div class="document-card">
               <div class="status-row"><span class="status-dot"></span>知識庫已就緒</div>
-              <strong>{safe_filename}</strong>
+              <strong>{escape(active_source_label)}</strong>
+              <small>{safe_filename}</small>
               <small>{info.page_count} 頁 · {info.chunk_count} 個文字區塊</small>
             </div>
             """,
@@ -401,16 +470,32 @@ with st.sidebar:
             "- 申請理賠需要準備哪些文件？"
         )
 
+current_role = ROLE_OPTIONS.get(st.session_state["user_role"], "user")
+staff_mode = current_role == "staff"
+
+if staff_mode:
+    hero_eyebrow = "SERVICE WORKBENCH"
+    hero_title = "客服查條款，\n回覆更有底。"
+    hero_subtitle = "整合多份保險文件，提供頁碼、信心分數、話術與案件摘要。"
+    hero_icon = "💼"
+    trust_items = ["條款依據與頁碼", "信心分數可見", "案件摘要可複製"]
+else:
+    hero_eyebrow = "POLICY HELPER"
+    hero_title = "看懂保障，\n不用自己猜。"
+    hero_subtitle = "用白話說明保單條款、理賠準備文件與需要注意的限制。"
+    hero_icon = "✓"
+    trust_items = ["白話回答", "附參考頁碼", "不取代正式理賠審核"]
+
 
 st.markdown(
-    """
+    f"""
     <section class="hero">
       <div>
-        <span class="eyebrow">INSURANCE INTELLIGENCE</span>
-        <h1>把複雜條款，<br>變成清楚答案。</h1>
-        <p>運用 RAG 搜尋保單原文，提供可追溯頁碼的保險條款問答。</p>
+        <span class="eyebrow">{hero_eyebrow}</span>
+        <h1>{hero_title.replace(chr(10), '<br>')}</h1>
+        <p>{hero_subtitle}</p>
       </div>
-      <div class="hero-shield">✓</div>
+      <div class="hero-shield">{hero_icon}</div>
     </section>
     """,
     unsafe_allow_html=True,
@@ -421,15 +506,13 @@ status_text = "4o-mini 已連線" if info and github_token else "離線展示模
 st.markdown(
     f"""
     <div class="trust-row">
-      <span>● {status_text}</span><span>回答附原文頁碼</span>
-      <span>不取代專業理賠審核</span>
+      <span>● {status_text}</span><span>{trust_items[0]}</span>
+      <span>{trust_items[1]}</span><span>{trust_items[2]}</span>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-current_role = ROLE_OPTIONS.get(st.session_state["user_role"], "user")
-staff_mode = current_role == "staff"
 chunks = getattr(st.session_state.get("vectorstore"), "documents", [])
 tab_labels = (
     ["💼 客戶案件工作台", "📤 客戶紀錄與呈報", "🛠️ 系統與保單狀態"]
@@ -454,9 +537,12 @@ with primary_tab:
         st.stop()
 
     if staff_mode:
-        st.markdown("### 案件輸入區")
-        st.caption("請在下方輸入客戶詢問或條款查核問題；系統會回傳條款依據、頁碼與可複製話術。")
+        render_staff_case_snapshot(
+            info, st.session_state.get("document_sources", [])
+        )
         render_key_number_summary(chunks)
+        st.markdown("### 案件輸入區")
+        st.caption("請在下方輸入客戶詢問或條款查核問題；系統會回傳條款依據、頁碼、信心分數與可複製話術。")
     else:
         st.markdown("#### 常見問題")
         quick_questions = {
@@ -487,10 +573,11 @@ with primary_tab:
                         for source_index, source in enumerate(sources):
                             confidence = source_confidence(source)
                             page = source.get("page", "未知")
+                            source_name = source.get("source", "預設保單")
                             content = source.get("content", "")[:300]
                             st.markdown(
                                 f"""
-**【來源 {source_index + 1}】** 頁碼：第 {page} 頁　｜　相似度：**{confidence} / 100**
+**【來源 {source_index + 1}】** {source_name} · 第 {page} 頁　｜　信心：**{confidence} / 100**
 
 > {content}
 
@@ -506,10 +593,11 @@ with primary_tab:
                     with st.expander("📄 參考條文（點擊展開查看頁碼）"):
                         for source_index, source in enumerate(sources):
                             page = source.get("page", "未知")
+                            source_name = source.get("source", "預設保單")
                             content = source.get("content", "")[:220]
                             st.markdown(
                                 f"""
-**【參考 {source_index + 1}】** 頁碼：第 {page} 頁
+**【參考 {source_index + 1}】** {source_name} · 第 {page} 頁
 
 > {content}
 
@@ -588,6 +676,12 @@ with secondary_tab:
                 st.warning(f"{index}. {question}")
         else:
             st.success("目前對話中沒有被標記為低信心的回答。")
+        st.markdown("### 本次引用頁碼總表")
+        citation_rows = build_citation_rows(st.session_state.messages)
+        if citation_rows:
+            st.dataframe(citation_rows, use_container_width=True, hide_index=True)
+        else:
+            st.caption("尚無引用條文；送出客戶問題後會在此整理來源文件、頁碼與信心。")
         if st.button("清除案件紀錄", use_container_width=True, icon="🧹"):
             reset_messages()
             st.rerun()
@@ -606,16 +700,21 @@ with tertiary_tab:
         st.markdown("### 我的文件")
         if info:
             safe_filename = escape(info.filename)
+            document_sources = st.session_state.get("document_sources", [])
             st.markdown(
                 f"""
                 <div class="info-grid">
-                  <div class="info-card"><small>目前文件</small><strong>{safe_filename}</strong></div>
+                  <div class="info-card"><small>目前知識庫</small><strong>{escape(active_source_label)}</strong></div>
                   <div class="info-card"><small>文件頁數</small><strong>{info.page_count} 頁</strong></div>
                   <div class="info-card"><small>文件狀態</small><strong>已建立，可開始提問</strong></div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+            if document_sources:
+                st.markdown("#### 包含文件")
+                for filename in document_sources:
+                    st.markdown(f"- {escape(filename)}")
             st.info("如果要更換保單，請使用左側「文件中心」重新上傳 PDF。")
         else:
             st.warning("目前尚未建立文件，請先從左側文件中心上傳或載入預設 PDF。")

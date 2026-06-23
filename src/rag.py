@@ -108,12 +108,16 @@ class Source:
     excerpt: str
     relevance: float
     distance: float | None = None
+    document: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         score = self.distance
         if score is None:
             score = max(0.0, 1.0 - self.relevance)
-        return {"content": self.excerpt, "page": self.page, "score": float(score)}
+        data = {"content": self.excerpt, "page": self.page, "score": float(score)}
+        if self.document:
+            data["source"] = self.document
+        return data
 
 
 @dataclass(frozen=True)
@@ -231,14 +235,36 @@ class LocalVectorStore:
 
 
 def build_knowledge_base(pdf_bytes: bytes, filename: str, api_key: str = ""):
-    pages = parse_pdf(pdf_bytes, filename)
+    return build_multi_knowledge_base([(filename, pdf_bytes)])
+
+
+def build_multi_knowledge_base(documents_data: Sequence[tuple[str, bytes]]):
+    if not documents_data:
+        raise RAGError("尚未提供任何 PDF 文件。")
+    pages: list[Document] = []
+    filenames: list[str] = []
+    document_hash = hashlib.sha256()
+    total_pages = 0
+    for filename, pdf_bytes in documents_data:
+        document_hash.update(filename.encode("utf-8"))
+        document_hash.update(pdf_bytes)
+        parsed_pages = parse_pdf(pdf_bytes, filename)
+        pages.extend(parsed_pages)
+        filenames.append(filename)
+        total_pages += len(parsed_pages)
     chunks = split_documents(pages)
     vectorstore = LocalVectorStore(chunks)
+    if len(filenames) == 1:
+        display_name = filenames[0]
+    else:
+        preview = "、".join(filenames[:2])
+        suffix = "" if len(filenames) <= 2 else f" 等 {len(filenames)} 份文件"
+        display_name = f"{preview}{suffix}"
     info = DocumentInfo(
-        filename=filename,
-        page_count=max(int(doc.metadata["page"]) for doc in pages) + 1,
+        filename=display_name,
+        page_count=total_pages,
         chunk_count=len(chunks),
-        document_hash=compute_file_hash(pdf_bytes),
+        document_hash=document_hash.hexdigest(),
     )
     return vectorstore, info
 
@@ -271,13 +297,16 @@ def format_context(results: Iterable[tuple[Document, float]]) -> tuple[str, list
     sources: list[Source] = []
     for index, (document, score) in enumerate(results, start=1):
         page = int(document.metadata.get("page", 0)) + 1
-        sections.append(f"[來源 {index}｜第 {page} 頁]\n{document.page_content}")
+        document_name = str(document.metadata.get("source", ""))
+        source_label = f"{document_name}｜第 {page} 頁" if document_name else f"第 {page} 頁"
+        sections.append(f"[來源 {index}｜{source_label}]\n{document.page_content}")
         sources.append(
             Source(
                 page=page,
                 excerpt=make_excerpt(document.page_content),
                 relevance=score_to_relevance(float(score)),
                 distance=float(score),
+                document=document_name,
             )
         )
     return "\n\n".join(sections), sources

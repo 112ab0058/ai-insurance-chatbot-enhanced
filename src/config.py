@@ -1,5 +1,31 @@
 APP_NAME = "安心保｜AI 保險助理"
 DEFAULT_PDF = "insurance.pdf"
+KNOWLEDGE_DOCS = [
+    {
+        "label": "課堂示範保單",
+        "description": "原始 insurance.pdf，適合快速展示保單問答。",
+        "files": ["insurance.pdf"],
+    },
+    {
+        "label": "完整展示知識庫",
+        "description": "保單 + 人壽契約範本 + 人身保險 Q&A，適合課堂展示與客服查核。",
+        "files": [
+            "insurance.pdf",
+            "knowledge_docs/uploaddowndoc.pdf",
+            "knowledge_docs/websitedowndoc.pdf",
+        ],
+    },
+    {
+        "label": "人壽契約範本",
+        "description": "傳統型個人人壽保險定型化契約條款範本。",
+        "files": ["knowledge_docs/uploaddowndoc.pdf"],
+    },
+    {
+        "label": "保險商品 Q&A",
+        "description": "人身保險商品 Q&A 問答集，含住院、實支實付、保單權益等題型。",
+        "files": ["knowledge_docs/websitedowndoc.pdf"],
+    },
+]
 MODEL_NAME = "openai/gpt-4o-mini"
 GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
 CHUNK_SIZE = 700
