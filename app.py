@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from src.config import (
     APP_NAME,
     DEFAULT_PDF,
-    GITHUB_MODELS_BASE_URL,
     KNOWLEDGE_DOCS,
     MODEL_NAME,
 )
@@ -211,7 +210,10 @@ def render_key_number_summary(chunks: list | None) -> None:
     if rows:
         st.dataframe(rows, use_container_width=True, hide_index=True)
     else:
-        st.info("目前未從條款中擷取到明確關鍵數字，建議改用條款關鍵字搜尋或直接查看 PDF 原文。")
+        st.info(
+            "目前未從文件中擷取到明確的保額、等待期或自負額等關鍵數字。"
+            "建議在下方案件輸入區詢問具體條款，或至「系統與保單狀態」查看原文區塊與頁碼。"
+        )
 
 
 def render_staff_case_snapshot(info: DocumentInfo | None, document_sources: list[str]) -> None:
@@ -269,7 +271,6 @@ def render_staff_system_status(
         f"""
         - 模型：`{MODEL_NAME}`
         - 服務來源：GitHub Models API
-        - Base URL：`{GITHUB_MODELS_BASE_URL}`
         - 檢索方式：Hybrid Search（BM25 + local similarity）
         - BM25 套件：`rank_bm25`
         - 低信心 fallback 門檻：`{SIMILARITY_THRESHOLD:.2f}`
