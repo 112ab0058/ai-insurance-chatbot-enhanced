@@ -608,12 +608,13 @@ with primary_tab:
             if message["role"] == "assistant":
                 if staff_mode:
                     st.caption("業務/客服模式：回答含條款判斷與客戶溝通建議；實際承保與理賠仍須人工複核。")
-                    st.text_area(
-                        "📋 可複製話術",
-                        value=extract_client_script(message["content"]),
-                        height=120,
-                        key=f"staff_script_{message_index}",
-                    )
+                    if sources:
+                        st.text_area(
+                            "📋 可複製話術",
+                            value=extract_client_script(message["content"]),
+                            height=120,
+                            key=f"staff_script_{message_index}",
+                        )
                 else:
                     if github_token:
                         st.caption("本回答由 4o-mini 依文件內容生成，僅供參考；實際理賠以保險公司審核為準。")
